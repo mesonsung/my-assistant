@@ -1,0 +1,64 @@
+# Build context hygiene for the derived Hermes image.
+# Keep skills/ and scripts/ — they are COPY'd into /opt/hermes-custom.
+
+# Runtime bind-mounts (must never enter the image)
+hermes-data/
+hermes-output/
+data/
+output/
+.hermes/
+.hermes-docker/
+**/models/
+**/weights/
+**/*.gguf
+**/*.onnx
+**/*.pt
+**/*.pth
+**/*.bin
+**/*.safetensors
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# VCS / IDE / caches
+.git/
+.gitignore
+.gitattributes
+.github/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python junk
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node (if any local tooling appears later)
+node_modules/
+**/node_modules/
+
+# Docs / misc not needed at build time
+*.md
+!skills/**/SKILL.md
+.dockerignore
+docker-compose*.yaml
+docker-compose*.yml
+Dockerfile*
+*.log
+tmp/
+temp/
+.cache/

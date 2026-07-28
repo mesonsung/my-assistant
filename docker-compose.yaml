@@ -1,0 +1,99 @@
+#
+# Hermes Agent — derived image (hermes-agent:meson)
+#
+# Usage:
+#   docker compose build
+#   docker compose up -d
+#
+# Optional host UID mapping (official s6 stage2 remaps `hermes` → these IDs):
+#   HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d
+#
+# Do NOT override entrypoint — keep upstream
+#   ENTRYPOINT ["/init", "/opt/hermes/docker/main-wrapper.sh"]
+# so s6 can chown volumes, supervise gateways, and forward signals.
+#
+# Security notes (aligned with NousResearch docker-compose.yml):
+# - Dashboard binds 0.0.0.0 here for LAN access; basic auth MUST stay enabled.
+#   Prefer SSH tunnel / reverse proxy for anything beyond a trusted network.
+# - docker.sock grants the agent host Docker control — remove if unused.
+#
+
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HERMES_BASE_IMAGE: ${HERMES_BASE_IMAGE:-nousresearch/hermes-agent:latest}
+        # Heavy / optional — default OFF (see Dockerfile). Set =1 for full image.
+        INSTALL_OPS_TOOLS: ${INSTALL_OPS_TOOLS:-0}
+        INSTALL_AGENT_UTILS: ${INSTALL_AGENT_UTILS:-0}
+        INSTALL_FASTER_WHISPER: ${INSTALL_FASTER_WHISPER:-0}
+        INSTALL_PIPER_TTS: ${INSTALL_PIPER_TTS:-0}
+        INSTALL_EDGE_TTS: ${INSTALL_EDGE_TTS:-1}
+        INSTALL_DDGS: ${INSTALL_DDGS:-1}
+        FASTER_WHISPER_VERSION: ${FASTER_WHISPER_VERSION:-1.2.1}
+        SOUNDFILE_VERSION: ${SOUNDFILE_VERSION:-0.13.1}
+    image: hermes-agent:meson
+    container_name: hermes
+    restart: unless-stopped
+    command: ["gateway", "run"]
+    environment:
+      TZ: ${TZ:-Asia/Taipei}
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+      # Optional: enable OpenAI-compatible API + /health on :8642
+      # API_SERVER_ENABLED: "true"
+      # API_SERVER_HOST: "0.0.0.0"
+      # API_SERVER_KEY: ${API_SERVER_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${HERMES_GATEWAY_PORT:-8642}:8642"
+    volumes:
+      - ./hermes-data:/opt/data
+      - ./hermes-output:/output
+      # Enable Docker tools inside the agent (host control — high privilege)
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      # Works even when API server / :8642 is disabled (common for chat-only gateways).
+      # If API_SERVER_* is enabled, you may switch to:
+      #   test: ["CMD", "curl", "-sf", "http://127.0.0.1:8642/health"]
+      test: ["CMD", "hermes", "gateway", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  dashboard:
+    image: hermes-agent:meson
+    container_name: hermes-dashboard
+    restart: unless-stopped
+    command: ["dashboard", "--host", "0.0.0.0"]
+    ports:
+      - "${HERMES_DASHBOARD_PORT:-9119}:9119"
+    volumes:
+      - ./hermes-data:/opt/data
+    environment:
+      TZ: ${TZ:-Asia/Taipei}
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+      GATEWAY_HEALTH_URL: ${GATEWAY_HEALTH_URL:-http://hermes:8642}
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-meson}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-hermes}
+      # Set a stable secret so dashboard sessions survive restarts:
+      # HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_BASIC_AUTH_SECRET:-}
+    depends_on:
+      hermes:
+        condition: service_healthy
+    healthcheck:
+      # 401/403 count as healthy — dashboard requires basic auth on non-loopback binds.
+      test:
+        [
+          "CMD-SHELL",
+          "code=$$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9119/ || echo 000); echo $$code | grep -Eq '^(200|301|302|401|403)$$'",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
